@@ -1,0 +1,412 @@
+0) Scope & keuzes (15–20 min)
+ Kern-doel scherp zetten: “events opnemen → opslaan → structureel querybaar maken → metrics/summary leveren”.
+
+ Bepalen interactie vorm:
+
+    Ingest: POST /events (bulk + single)
+
+    Query: GET /users/{id}/activity (recente events)
+
+    Metrics: GET /users/{id}/metrics?from=&to=
+
+ (Optioneel) Dashboard: GET /dashboard?user_id= met simpele grafiek (HTML + inline JS)
+
+ Bepalen datamodel strategie:
+
+ “Raw” opslag (originele JSON + errors) naast “Normalized” tabellen (voor queries).
+
+ Bepalen validatiebeleid voor dirty data:
+
+ Reject (400) vs Accept-but-flag (opslaan als invalid) → meestal: accept + markeer invalid + log (want “streaming later”).
+
+ Minimal viable features kiezen om tijd te bewaken:
+
+ 4–5 event types (start/progress/points/complete)
+
+ Basis metrics (count per type, points sum, progress avg, daily histogram)
+
+ Geen auth, geen fancy UI, wel nette output + README.
+
+1) Project skeleton & tooling (20–30 min)
+
+ Maak repo structuur:
+
+ /public/index.php (front controller)
+
+ /src (domain + infra)
+
+ /migrations of /database
+
+ /tests (optioneel, minimaal)
+
+ README.md
+
+ Composer init:
+
+ composer.json met autoload PSR-4 (App\ → src/)
+
+ Dependencies kiezen:
+
+ Minimaal: vlucas/phpdotenv (optioneel) + symfony/console (optioneel)
+
+ Of microframework (Slim/Symfony) als je sneller bent daarmee
+
+ Run-methode kiezen:
+
+ Simpel: php -S localhost:8080 -t public
+
+ (Optioneel) Dockerfile + docker-compose voor 1-command start
+
+ Config:
+
+ .env (DB path, debug)
+
+ var/ map voor SQLite db bestand
+
+2) Datamodel uitwerken (30–45 min)
+
+Doel: raw events behouden + normalized query-vriendelijke structuur.
+
+2.1 Tabellen definiëren (SQLite)
+
+ events_raw
+
+ id (PK)
+
+ received_at (timestamp)
+
+ source (string, bv “platform”)
+
+ payload (text) — originele JSON
+
+ is_valid (bool)
+
+ error (text nullable) — validatie/parse fout
+
+ user_activity_events (genormaliseerd)
+
+ id (PK)
+
+ raw_id (FK naar events_raw)
+
+ user_id (string/int)
+
+ type (string: started_training / made_progress / scored_points / completed_training)
+
+ occurred_at (timestamp uit payload; fallback = received_at)
+
+ training_id (nullable)
+
+ progress (nullable float/int)
+
+ points (nullable int)
+
+ metadata (text JSON, optional voor “extra velden”)
+
+ Indexen:
+
+ index op (user_id, occurred_at)
+
+ index op (type)
+
+ index op (training_id) (als je training metrics doet)
+
+2.2 JSON event schema afspreken
+
+ Minimale velden:
+
+ event_id (optioneel maar handig)
+
+ user_id (required)
+
+ type (required)
+
+ occurred_at (ISO8601 string recommended)
+
+ type-specifiek:
+
+ progress: training_id, progress
+
+ points: points, (optioneel training_id)
+
+ Malformed scenario’s opsommen:
+
+ invalid JSON
+
+ ontbrekende user_id of type
+
+ onbekend type
+
+ points niet numeric / negatief
+
+ occurred_at onparsebaar
+
+3) Migrations / DB setup (15–25 min)
+
+ Maak migratie(s) aan:
+
+ 001_create_events_raw.sql
+
+ 002_create_user_activity_events.sql
+
+ Script/command om te initialiseren:
+
+ php bin/migrate.php of composer run migrate
+
+ Seed data (optioneel maar fijn voor reviewers):
+
+ php bin/seed.php dat 20–50 events genereert (per type, per dag)
+
+4) Ingest pipeline bouwen (45–75 min)
+
+Kern: ontvangen → raw opslaan → valideren/normaliseren → normalized opslaan.
+
+4.1 HTTP endpoint(s)
+
+ POST /events
+
+ accepteer:
+
+ single JSON object
+
+ of array van events { events: [...] }
+
+ response:
+
+ 202 Accepted met summary: received, stored_valid, stored_invalid, invalid_examples
+
+ (Optioneel) POST /events/raw als je raw-only wil ondersteunen
+
+4.2 Parser & validator
+
+ JSON decode met try/catch-achtig gedrag (in PHP: json_decode(..., true) + json_last_error())
+
+ Validatie rules:
+
+ required: user_id, type
+
+ type in allowlist
+
+ occurred_at parsebaar (anders fallback)
+
+ per type:
+
+ progress: progress numeric 0..100 (of 0..1), training_id required?
+
+ points: points int >=0
+
+ Dirty data handling:
+
+ Altijd naar events_raw schrijven
+
+ Als invalid:
+
+ events_raw.is_valid=false + error
+
+ niet naar user_activity_events schrijven
+
+ Als valid:
+
+ events_raw.is_valid=true
+
+ normalize → insert in user_activity_events
+
+4.3 Idempotency (kleine toevoeging, optioneel)
+
+ Als payload een event_id heeft:
+
+ unique index op event_id (in normalized of raw)
+
+ duplicates negeren / updaten (in README vermelden)
+
+ Als geen event_id: skip, en noem trade-off
+
+5) Query & “Product-consumable representation” (45–75 min)
+
+Doel: Product team kan “clean summary” en metrics ophalen.
+
+5.1 Recent activity endpoint
+
+ GET /users/{userId}/activity?limit=50
+
+ haalt normalized events op, sorted by occurred_at DESC
+
+ return JSON:
+
+ user_id
+
+ items: lijst met {type, occurred_at, training_id, progress, points}
+
+ (Optioneel) filter:
+
+ type=...
+
+ from=...&to=...
+
+5.2 Metrics endpoint
+
+ GET /users/{userId}/metrics?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+ bereken:
+
+ total events
+
+ count per type
+
+ total points
+
+ progress avg/max (als aanwezig)
+
+ “engagement” per dag (histogram):
+
+ array { date, count }
+
+ SQL aggregaties:
+
+ GROUP BY date(occurred_at)
+
+ SUM(points), AVG(progress), COUNT(*)
+
+5.3 Dashboard/Graph output (super simpel, maar leuk)
+
+Kies 1 van deze:
+
+ Optie A (snel): GET /dashboard?user_id=... → HTML die metrics toont + mini grafiek via inline JS (Chart.js kan, maar ook zonder lib: simpele SVG/ASCII).
+
+ Optie B (API only): GET /users/{id}/metrics levert histogram; README zegt “visualiseer in frontend”.
+
+6) Observability & error reporting (10–20 min)
+
+ Simpele logging:
+
+ log file var/app.log (invalid events + exceptions)
+
+ Health endpoint:
+
+ GET /health → { status: "ok" }
+
+ Endpoint voor invalids (optioneel maar handig):
+
+ GET /events/invalid?limit=50
+
+7) Tests (optioneel, 20–40 min)
+
+Minimaal 2–4 “happy + sad path” checks.
+
+ Unit test validator:
+
+ valid event → ok
+
+ invalid JSON / missing user_id → invalid
+
+ Integration test (als je tijd hebt):
+
+ POST /events (bulk) → 202
+
+ GET /users/{id}/metrics → expected structure
+
+(Als tests teveel gedoe zijn: geen tests, maar dan wel in README noemen als trade-off.)
+
+8) README compleet maken (30–45 min)
+
+Checklist voor wat erin moet staan:
+
+8.1 Run instructions
+
+ Requirements: PHP 8.x
+
+ Install: composer install
+
+ Init DB: composer run migrate (en eventueel seed)
+
+ Start server: composer run serve
+
+8.2 Usage examples (copy/paste)
+
+ Voorbeeld curl POST single event
+
+ Voorbeeld curl POST bulk
+
+ Voorbeeld curl GET activity
+
+ Voorbeeld curl GET metrics
+
+ (Optioneel) screenshot/voorbeeld JSON responses
+
+8.3 Project structure overview
+
+ Waar zit:
+
+ routing/controller
+
+ validator/normalizer
+
+ repositories/DB
+
+ migrations
+
+ “core logic” pad: ingest → validate → raw store → normalized store
+
+8.4 Engineering decisions (Why)
+
+ Waarom SQLite (lightweight + makkelijk reviewen)
+
+ Waarom raw + normalized (auditability + query speed)
+
+ Waarom accept-but-flag invalid (streaming realiteit)
+
+8.5 Trade-offs (corners cut)
+
+ Geen auth
+
+ Simpele schema’s
+
+ Geen queue/streaming infra
+
+ Beperkte tests
+
+ Geen idempotency tenzij event_id aanwezig
+
+8.6 Production vision (5M events/day)
+
+ Ingest via queue/stream (Kafka/PubSub/SQS)
+
+ Consumer workers normaliseren async
+
+ DB naar Postgres/ClickHouse/BigQuery (afhankelijk van query type)
+
+ Partitioning, batching, backpressure
+
+ Dead-letter queue voor invalid/poison messages
+
+ Observability (metrics, tracing), schema registry, versioning
+
+9) Final polish (10–20 min)
+
+ make/composer scripts netjes:
+
+ composer run serve
+
+ composer run migrate
+
+ composer run seed
+
+ composer run test (indien)
+
+ Code style:
+
+ PSR-12 formatter (optioneel)
+
+ Check edgecases:
+
+ bulk ingest met 1 invalid tussen valid events
+
+ unknown type
+
+ empty body
+
+ Zorg dat repo “reviewer friendly” is:
+
+ voorbeeld .env.example
+
+ db file niet committen (in .gitignore)
