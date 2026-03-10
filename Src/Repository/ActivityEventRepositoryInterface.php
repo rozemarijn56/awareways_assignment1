@@ -6,8 +6,5 @@ namespace App\Repository;
 
 interface ActivityEventRepositoryInterface
 {
- public function insert(
-        array $payload, 
-        bool $isValid, 
-        ?string $error = null ): int;
+        public function insert(array $event, int $rawId): void;
 }

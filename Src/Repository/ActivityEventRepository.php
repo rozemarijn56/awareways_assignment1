@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Domain;
 
+use App\Repository\ActivityEventRepositoryInterface;
 use DateTimeImmutable;
 use Throwable;
+use PDO;
 use App\Support\uuid;
 
-final class ActivityEventRepository 
+final class ActivityEventRepository implements ActivityEventRepositoryInterface
 {
     public function __construct(private PDO $pdo)
     {
