@@ -6,7 +6,7 @@ namespace App\Domain;
 
 use App\Repository\RawEventRepositoryInterface;
 use PDO;
-use App\Support\uuid;
+use App/Support/Uuid;
 
 final class RawEventRepository implements RawEventRepositoryInterface
 {
