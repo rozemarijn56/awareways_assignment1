@@ -16,8 +16,8 @@ final class EventValidator implements EventValidatorInterface
         $this->validateUserId(event: $event, errors: $errors);
         $this->validateType(event: $event, errors: $errors);
         $this->validateOccurredAt(event: $event, errors: $errors);
-        if(isset($event['type']) && EventTypes::isValid(type: $event['types'])) {
-            $this->validateEventSpecificFields($event, $errors);
+        if(!empty($event['type']) && EventTypes::isValid(type: $event['type'])) {
+            $this->validateTypeSpecificRules(event: $event, errors: $errors);
         }
 
         return [
@@ -26,7 +26,7 @@ final class EventValidator implements EventValidatorInterface
         ];
     }
 
-    private function validateUserId(array $event, array &$errors){
+    private function validateUserId(array $event, array &$errors): void{
         if(!isset($event['user_id']) || $event['user_id'] === ''){
             $errors[] = 'user_id is required';
         }
@@ -55,7 +55,7 @@ final class EventValidator implements EventValidatorInterface
         }
     }
 
-    private function validateEventSpecificFields(array $event, array &$errors)
+    private function validateTypeSpecificRules(array $event, array &$errors): void
     {
         switch($event['type'])
         {
@@ -73,7 +73,7 @@ final class EventValidator implements EventValidatorInterface
         }
     }
 
-    private function validatePoints(array $event, array &$errors){
+    private function validatePoints(array $event, array &$errors): void{
                  if(isset($event['points'])) {
             if(!is_int(value: $event['points']) || $event['points'] < 0) {
                 $errors[] = 'points must be a non-negative integer';
@@ -81,7 +81,7 @@ final class EventValidator implements EventValidatorInterface
         }
     }
 
-    private function validateProgress(array $event, array &$errors)
+    private function validateProgress(array $event, array &$errors): void
     {
         if(isset($event['progress'])) {
             if(!is_int(value: $event['progress']) && !is_float(value: $event['progress'])) {
@@ -93,7 +93,7 @@ final class EventValidator implements EventValidatorInterface
 
     }
 
-    private function validateTrainingId(array $event, array &$errors)
+    private function validateTrainingId(array $event, array &$errors): void
     {
         if(isset($event['training_id']) || $event['trianing_id'] === '')
             {
